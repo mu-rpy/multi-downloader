@@ -83,19 +83,58 @@ def main():
     print("\n--- Format Selection ---")
     selected_format = prompt_selection("Available formats:", available_formats, all_formats, format_descriptions)
     
-    available_modes = sorted(caps[selected_platform][selected_format])
-    print("\n--- Mode Selection ---")
-    selected_mode = prompt_selection("Available modes:", available_modes, all_modes)
+    available_modes = caps[selected_platform][selected_format]
     
-    url = input(f"\nEnter URL for {selected_platform.upper()} {selected_mode.capitalize()}: ").strip()
+    display_modes = []
+    if 'playlist' in available_modes or 'edit' in available_modes:
+        display_modes.append('playlist')
+    if 'single' in available_modes:
+        display_modes.append('single')
+        
+    all_possible_top_modes = []
+    if 'playlist' in all_modes or 'edit' in all_modes:
+        all_possible_top_modes.append('playlist')
+    if 'single' in all_modes:
+        all_possible_top_modes.append('single')
+        
+    print("\n--- Mode Selection ---")
+    selected_top_mode = prompt_selection("Available modes:", display_modes, all_possible_top_modes)
+    
+    selected_sub_mode = None
+    if selected_top_mode == 'playlist':
+        sub_options = []
+        if 'playlist' in available_modes:
+            sub_options.append('create playlist')
+        if 'edit' in available_modes:
+            sub_options.append('update playlist')
+            sub_options.append('append playlist')
+            
+        all_possible_subs = ['create playlist', 'update playlist', 'append playlist']
+        
+        print("\n--- Playlist Options ---")
+        selected_sub_mode = prompt_selection("Select playlist action:", sub_options, all_possible_subs)
+    
+    url = input(f"\nEnter URL: ").strip()
     if not url:
         print("URL cannot be empty.")
         sys.exit(1)
         
-    module_name = f"src.{selected_format}.{selected_platform}_{selected_mode}"
+    if selected_top_mode == 'single':
+        module_name = f"src.{selected_format}.{selected_platform}_single"
+        func_name = "process_single"
+    else:
+        if selected_sub_mode == 'create playlist':
+            module_name = f"src.{selected_format}.{selected_platform}_playlist"
+            func_name = "process_playlist"
+        elif selected_sub_mode == 'update playlist':
+            module_name = f"src.{selected_format}.{selected_platform}_edit"
+            func_name = "process_update"
+        elif selected_sub_mode == 'append playlist':
+            module_name = f"src.{selected_format}.{selected_platform}_edit"
+            func_name = "process_append"
+            
     try:
         mod = importlib.import_module(module_name)
-        func_name = f"process_{selected_mode}"
         if hasattr(mod, func_name):
             func = getattr(mod, func_name)
             asyncio.run(func(url))
