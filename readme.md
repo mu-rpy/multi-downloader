@@ -1,5 +1,5 @@
 ## Multi Media Downloader
 
 > [!WARNING]
-> This is a personal side proejct, meant for educational purposes only.
-> Dont expect any updates.
+> This is intended for educational purposes only.
+> By continuing to use this, you accept the risks and acknowledge that you have been warned.
