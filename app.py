@@ -4,6 +4,9 @@ import importlib
 import asyncio
 import yt_dlp
 
+browser_name = input('Enter Your Browser name: ').lower() # e.g.: brave, firefox, chrome, etc...
+if not browser_name: browser_name = 'chrome'
+
 def ensure_cached_cookies():
     cache_dir = os.path.join('src', 'cache')
     os.makedirs(cache_dir, exist_ok=True)
@@ -13,7 +16,7 @@ def ensure_cached_cookies():
         print("Caching browser cookies...")
         try:
             opts = {
-                'cookiesfrombrowser': ('brave',),
+                'cookiesfrombrowser': (browser_name,),
                 'cookiefile': cookie_file,
                 'quiet': True,
                 'noprogress': True,
@@ -21,8 +24,8 @@ def ensure_cached_cookies():
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-        except Exception:
-            pass
+        except Exception as e:
+            print(e)
 
 def get_capabilities():
     caps = {}
