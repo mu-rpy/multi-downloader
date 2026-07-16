@@ -1,2 +1,4 @@
 downloads/
 .vscode/
+src/cache/
+src/__pycache__

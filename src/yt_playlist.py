@@ -4,23 +4,40 @@ import re
 import glob
 import yt_dlp
 
-BROWSER_NAME = 'brave'
+COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt')
 
 def download_track(idx, url, playlist_name):
     folder = f'downloads/yt/{playlist_name}'
     opts = {
         'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'aac',
-        }],
+        'postprocessors': [
+            {
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'aac',
+            },
+            {
+                'key': 'FFmpegMetadata',
+                'add_metadata': True,
+            }
+        ],
+        'parse_metadata': [
+            '%(title)s:%(meta_artist)s - %(meta_title)s',
+            '%(uploader)s:%(meta_artist)s',
+            '%(title)s:%(meta_title)s',
+        ],
         'outtmpl': f'{folder}/{idx:04d}_%(title)s.%(ext)s',
-        'restrictfilenames': True,
+        'restrictfilenames': False,
         'quiet': True,
         'noprogress': True,
         'ignoreerrors': True,
-        'cookiesfrombrowser': (BROWSER_NAME,),
+        'retries': float('inf'),            
+        'fragment_retries': float('inf'),   
+        'file_access_retries': float('inf'),
+        'socket_timeout': 30,
     }
+    if os.path.exists(COOKIE_PATH):
+        opts['cookiefile'] = COOKIE_PATH
+        
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
         
@@ -35,8 +52,14 @@ async def process_playlist(url, max_concurrent=8):
         'extract_flat': 'in_playlist',
         'quiet': True,
         'ignoreerrors': True,
-        'cookiesfrombrowser': (BROWSER_NAME,),
+        'retries': float('inf'),            
+        'fragment_retries': float('inf'),   
+        'file_access_retries': float('inf'),
+        'socket_timeout': 30,
     }
+    if os.path.exists(COOKIE_PATH):
+        extract_opts['cookiefile'] = COOKIE_PATH
+        
     with yt_dlp.YoutubeDL(extract_opts) as ydl:
         info = ydl.extract_info(url, download=False)
     
