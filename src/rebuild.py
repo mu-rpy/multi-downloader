@@ -1,195 +1,132 @@
+import asyncio
 import os
 import re
-import glob
-import asyncio
-import subprocess
 import yt_dlp
-from concurrent.futures import ThreadPoolExecutor
 
-COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt')
-BASE_DIR = 'downloads'
-FOLDER = None
+COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt') if os.path.exists(os.path.join('src', 'cache', 'cookies.txt')) else os.path.join('cache', 'cookies.txt')
 
-def ensure_cached_cookies(browser_name):
-    cache_dir = os.path.join('src', 'cache')
-    os.makedirs(cache_dir, exist_ok=True)
-    cookie_file = os.path.join(cache_dir, 'cookies.txt')
-    
-    if not os.path.exists(cookie_file):
-        print("Caching browser cookies...")
-        try:
-            opts = {
-                'cookiesfrombrowser': (browser_name,),
-                'cookiefile': cookie_file,
-                'quiet': True,
-                'noprogress': True,
-                'ignoreerrors': True,
-            }
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-        except Exception as e:
-            print(e)
-
-def interactive_select_folder():
-    if not os.path.exists(BASE_DIR):
-        print(f"Error: {BASE_DIR}/ directory not found.")
-        return None
-
-    platforms = [d for d in os.listdir(BASE_DIR) if os.path.isdir(os.path.join(BASE_DIR, d))]
-    if not platforms:
-        print("No platform folders found.")
-        return None
-
-    print("\nSelect Platform:")
-    for idx, platform in enumerate(platforms, 1):
-        print(f"  {idx}. {platform}")
-        
-    while True:
-        p_choice = input("\nSelect platform #: ").strip()
-        if p_choice.isdigit():
-            p_idx = int(p_choice) - 1
-            if 0 <= p_idx < len(platforms):
-                platform_path = os.path.join(BASE_DIR, platforms[p_idx])
-                break
-        print("Invalid selection.")
-
-    folders = [d for d in os.listdir(platform_path) if os.path.isdir(os.path.join(platform_path, d))]
-    if not folders:
-        print(f"No playlists found inside {platforms[p_idx]}.")
-        return None
-
-    print("\nSelect Folder:")
-    for idx, folder in enumerate(folders, 1):
-        print(f"  {idx}. {folder}")
-
-    while True:
-        f_choice = input("\nSelect folder #: ").strip()
-        if f_choice.isdigit():
-            f_idx = int(f_choice) - 1
-            if 0 <= f_idx < len(folders):
-                return os.path.join(platform_path, folders[f_idx])
-        print("Invalid selection.")
-
-def count_partial_files():
-    partials = glob.glob(os.path.join(FOLDER, '*.tmp'))
-    all_files = glob.glob(os.path.join(FOLDER, '*.aac'))
-    for f in all_files:
-        if os.path.getsize(f) < 10240:
-            partials.append(f)
-    return len(partials)
-
-def get_missing_indices():
-    files = glob.glob(os.path.join(FOLDER, '*.aac')) + glob.glob(os.path.join(FOLDER, '*.m4a'))
-    indices = []
-    for f in files:
-        match = re.match(r'^(\d+)_', os.path.basename(f))
-        if match:
-            indices.append(int(match.group(1)))
-    if not indices:
-        return []
-    return [i for i in range(1, max(indices) + 1) if i not in indices]
-
-def clean_file_sync(file_path):
-    dir_name, file_name = os.path.split(file_path)
-    base_name, _ = os.path.splitext(file_name)
-    temp_output = os.path.join(dir_name, f"temp_{base_name}.aac")
-    final_output = os.path.join(dir_name, f"{base_name}.aac")
-    cmd = [
-        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-        '-i', file_path, '-map_metadata', '-1',
-        '-fflags', '+bitexact', '-flags:v', '+bitexact', '-flags:a', '+bitexact',
-        '-c:a', 'copy', temp_output
-    ]
-    try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        os.remove(file_path)
-        os.rename(temp_output, final_output)
-        return True
-    except Exception:
-        if os.path.exists(temp_output):
-            try: os.remove(temp_output)
-            except OSError: pass
-        return False
-
-def download_track_sync(idx, url):
+def download_track(idx, url, playlist_name, format_type):
+    folder = f'downloads/yt/{playlist_name}'
+    if format_type == 'video':
+        fmt_str = 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    else:
+        fmt_str = 'bestaudio[ext=m4a]/bestaudio/best'
     opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'format': fmt_str,
         'nocachefile': True,
-        'js_runtimes': {'node': {}},
-        'outtmpl': f'{FOLDER}/{idx:04d}_%(title)s.%(ext)s',
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'aac'}],
+        'cache_dir': False,
+        'outtmpl': f'{folder}/{idx:04d}_%(title)s.%(ext)s',
         'restrictfilenames': False,
         'quiet': True,
         'noprogress': True,
-        'ignoreerrors': True,
+        'ignoreerrors': False,
+        'retries': 5,            
+        'fragment_retries': 5,   
+        'file_access_retries': 5,
+        'socket_timeout': 30,
+        'add_metadata': False,
     }
     if os.path.exists(COOKIE_PATH):
         opts['cookiefile'] = COOKIE_PATH
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        if os.path.exists(folder):
+            for file in os.listdir(folder):
+                if file.startswith(f"{idx:04d}_") and (file.endswith('.part') or file.endswith('.ytdl')):
+                    try:
+                        os.remove(os.path.join(folder, file))
+                    except OSError:
+                        pass
+        raise e
 
-async def download_missing(url, missing_indices):
-    for f in glob.glob(os.path.join(FOLDER, '*.tmp')):
-        os.remove(f)
-
-    extract_opts = {'extract_flat': 'in_playlist', 'quiet': True}
-    if os.path.exists(COOKIE_PATH):
-        extract_opts['cookiefile'] = COOKIE_PATH
-
-    print(f"Scanning playlist metadata...")
-    with yt_dlp.YoutubeDL(extract_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        entries = info.get('entries', [])
-
-    sem = asyncio.Semaphore(8)
-    loop = asyncio.get_running_loop()
-
-    async def sem_download(idx, entry_url, title):
+async def rebuild_playlist_from_tracker(info_file_path, max_concurrent=8, max_retries=3, base_retry_delay=5):
+    if not os.path.exists(info_file_path):
+        return
+    playlist_name = None
+    missing_tasks_data = []
+    with open(info_file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('[') and line.endswith(']') and not re.match(r'^\[\d{4}-\d{2}-\d{2}', line):
+            playlist_name = line[1:-1].strip()
+            continue
+        match = re.match(r'^(\d{4})\s+"([^"]+)"', line)
+        if match and playlist_name:
+            idx = int(match.group(1))
+            url = match.group(2)
+            missing_tasks_data.append((idx, url, playlist_name))
+    if not missing_tasks_data:
+        try:
+            os.remove(info_file_path)
+        except OSError:
+            pass
+        return
+    print(f"\n[REBUILD] Select target format for missing items in: {playlist_name}")
+    print("1. Audio (m4a)")
+    print("2. Video (mp4)")
+    format_choice = await asyncio.to_thread(input, "Select format option: ")
+    format_choice = format_choice.strip()
+    format_type = 'video' if format_choice == '2' or format_choice.lower() == 'video' else 'audio'
+    sem = asyncio.Semaphore(max_concurrent)
+    async def retry_download_worker(idx, url, p_name):
         async with sem:
-            print(f"[Download] Index {idx:04d}: {title}")
-            await loop.run_in_executor(None, download_track_sync, idx, entry_url)
+            retries = 0
+            current_delay = base_retry_delay
+            while retries < max_retries:
+                try:
+                    await asyncio.to_thread(download_track, idx, url, p_name, format_type)
+                    return (idx, url, True)
+                except Exception:
+                    retries += 1
+                    if retries < max_retries:
+                        await asyncio.sleep(current_delay)
+                        current_delay *= 2
+            return (idx, url, False)
+    tasks = [
+        retry_download_worker(idx, url, p_name)
+        for idx, url, p_name in missing_tasks_data
+    ]
+    results = await asyncio.gather(*tasks)
+    still_missing = [item for item in results if item[2] is False]
+    if not still_missing:
+        try:
+            os.remove(info_file_path)
+        except OSError:
+            pass
+        print(f"Rebuild successful for {playlist_name}. All missing tracks fetched.")
+    else:
+        print(f"Rebuild incomplete for {playlist_name}. {len(still_missing)} tracks still failed consecutively.")
+        with open(info_file_path, 'w', encoding='utf-8') as f:
+            from datetime import datetime
+            current_date = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+            f.write(f"{current_date}\n")
+            f.write(f"[{playlist_name}]\n")
+            for idx, url, _ in still_missing:
+                f.write(f"{idx:04d} \"{url}\"\n")
+        opts_clear = {'quiet': True}
+        with yt_dlp.YoutubeDL(opts_clear) as ydl:
+            try:
+                ydl.cache.remove()
+            except Exception:
+                pass
 
-    tasks = []
-    for i, entry in enumerate(entries):
-        idx = i + 1
-        if idx in missing_indices and entry.get('url'):
-            tasks.append(sem_download(idx, entry['url'], entry.get('title', 'Unknown')))
-
-    if tasks:
-        print(f"\nDownloading {len(tasks)} missing files concurrently...")
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    m4a_files = glob.glob(os.path.join(FOLDER, '*.m4a'))
-    aac_files = glob.glob(os.path.join(FOLDER, '*.aac'))
-    all_files = m4a_files + aac_files
-
-    if all_files:
-        num_workers = min(32, (os.cpu_count() or 4) * 4)
-        print(f"\nProcessing {len(all_files)} files through clean queue...")
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            clean_tasks = [
-                loop.run_in_executor(executor, clean_file_sync, f)
-                for f in all_files
-            ]
-            results = await asyncio.gather(*clean_tasks)
-        print(f"Finished. Cleaned {sum(1 for r in results if r)}/{len(all_files)} files.")
+async def main(*args, **kwargs):
+    base_dir = os.path.dirname(os.path.dirname(__file__)) if '__file__' in locals() else os.getcwd()
+    cache_dir = os.path.join(base_dir, 'src', 'cache') if os.path.exists(os.path.join(base_dir, 'src')) else os.path.join(base_dir, 'cache')
+    if not os.path.exists(cache_dir):
+        return
+    info_files = [
+        os.path.join(cache_dir, f) 
+        for f in os.listdir(cache_dir) 
+        if f.endswith('.info')
+    ]
+    for info_file in info_files:
+        await rebuild_playlist_from_tracker(info_file)
 
 if __name__ == "__main__":
-    browser = input('Enter Browser Name: ').strip().lower()
-    if browser:
-        ensure_cached_cookies(browser)
-
-    FOLDER = interactive_select_folder()
-    if FOLDER:
-        missing = get_missing_indices()
-        partial_count = count_partial_files()
-        
-        print(f"Missing sequence files: {len(missing)}")
-        print(f"Partially built/broken files: {partial_count}")
-        
-        if input("Continue with patch? (Y/N): ").strip().lower() == 'y':
-            url = input("URL: ").strip()
-            if missing and url:
-                asyncio.run(download_missing(url, missing))
-            else:
-                print("No missing entries to download or invalid URL.")
+    asyncio.run(main())

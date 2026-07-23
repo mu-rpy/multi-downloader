@@ -2,32 +2,51 @@ import os
 import sys
 import importlib
 import asyncio
+import inspect
 import yt_dlp
+import atexit
 
-platforms_config = {'yt': 'YouTube'}
+platforms_config = {
+    'yt': 'YouTube'
+}
+
+cache_dir = os.path.join('src', 'cache')
+os.makedirs(cache_dir, exist_ok=True)
+COOKIE_FILE = os.path.join(cache_dir, 'cookies.txt')
+
+def cleanup_cookies():
+    if os.path.exists(COOKIE_FILE):
+        try:
+            os.remove(COOKIE_FILE)
+        except OSError:
+            pass
+
+atexit.register(cleanup_cookies)
 
 print("[SETUP]")
-browser_name = input('Enter your browser name (DEFAULT: FireFox): ').strip().lower()
-if not browser_name: 
-    browser_name = 'firefox'
+print("(* Press Enter to skip if you don't need age-restricted/18+ content)")
+browser_input = input('Enter your browser name (e.g. firefox, chrome): ').strip().lower()
+
+if browser_input:
+    browser_name = browser_input
+else:
+    browser_name = None
 
 def ensure_cached_cookies():
-    cache_dir = os.path.join('src', 'cache')
-    os.makedirs(cache_dir, exist_ok=True)
-    cookie_file = os.path.join(cache_dir, 'cookies.txt')
-    if not os.path.exists(cookie_file):
+
+    if not os.path.exists(COOKIE_FILE):
         try:
             opts = {
                 'cookiesfrombrowser': (browser_name,),
-                'cookiefile': cookie_file,
+                'cookiefile': COOKIE_FILE,
                 'quiet': True,
                 'noprogress': True,
                 'ignoreerrors': True,
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-        except Exception:
-            pass
+                ydl.extract_info("https://youtube.com", download=False)
+        except Exception as e:
+            print(f"Cookie caching error: {e}")
 
 def get_capabilities():
     caps = {}
@@ -69,6 +88,7 @@ def main():
     ensure_cached_cookies()
     caps = get_capabilities()
     if not caps:
+        print("Error: No valid modules found inside src/")
         sys.exit(1)
         
     selected_platform = select_item("[PLATFORM]", list(caps.keys()), platforms_config)
@@ -97,10 +117,19 @@ def main():
         module_name = "src.rebuild"
         func_name = "main"
         url = None
+        format_type = None
     else:
         url = input("\nEnter URL: ").strip()
         if not url:
+            print("Error: URL string cannot be empty.")
             sys.exit(1)
+            
+        print("\n[FORMAT]")
+        print("1. Audio (m4a)")
+        print("2. Video (mp4)")
+        format_choice = input("Select format option: ").strip()
+        format_type = 'video' if format_choice == '2' or format_choice.lower() == 'video' else 'audio'
+        
         if selected_top_mode == 'single':
             module_name = f"src.{selected_platform}_single"
             func_name = "process_single"
@@ -115,23 +144,27 @@ def main():
         mod = importlib.import_module(module_name)
         if hasattr(mod, func_name):
             func = getattr(mod, func_name)
-            if asyncio.iscoroutinefunction(func):
+            if inspect.iscoroutinefunction(func):
                 if url is not None:
-                    asyncio.run(func(url))
+                    asyncio.run(func(url, format_type=format_type))
                 else:
                     asyncio.run(func())
             else:
                 if url is not None:
-                    func(url)
+                    func(url, format_type=format_type)
                 else:
                     func()
         else:
-            pass
-    except Exception:
-        pass
+            print(f"Error: Function {func_name} target not exposed in {module_name}")
+    except Exception as e:
+        print(f"Runtime Processing Crash Traceback: {e}")
+        raise e
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
+        print("\nProcess interrupted cleanly by user.")
+    finally:
+        cleanup_cookies()
         sys.exit(0)
