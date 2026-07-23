@@ -1,55 +1,49 @@
 import asyncio
 import os
 import re
-import glob
+from datetime import datetime
 import yt_dlp
 
-COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt')
+COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt') if os.path.exists(os.path.join('src', 'cache', 'cookies.txt')) else os.path.join('cache', 'cookies.txt')
 
 def download_track(idx, url, playlist_name):
     folder = f'downloads/yt/{playlist_name}'
     opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [
-            {
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'aac',
-            },
-            {
-                'key': 'FFmpegMetadata',
-                'add_metadata': True,
-            }
-        ],
-        'parse_metadata': [
-            '%(title)s:%(meta_artist)s - %(meta_title)s',
-            '%(uploader)s:%(meta_artist)s',
-            '%(title)s:%(meta_title)s',
-        ],
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'nocachefile': True,
+        'js_runtimes': {'node': {}},
         'outtmpl': f'{folder}/{idx:04d}_%(title)s.%(ext)s',
         'restrictfilenames': False,
         'quiet': True,
         'noprogress': True,
-        'ignoreerrors': True,
+        'ignoreerrors': False,
         'retries': float('inf'),            
         'fragment_retries': float('inf'),   
         'file_access_retries': float('inf'),
         'socket_timeout': 30,
+        'add_metadata': False,
     }
     if os.path.exists(COOKIE_PATH):
         opts['cookiefile'] = COOKIE_PATH
         
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-        
-    for file in glob.glob(f'{folder}/{idx:04d}_*.m4a'):
-        new_file = file[:-4] + '.aac'
-        if os.path.exists(new_file):
-            os.remove(new_file)
-        os.rename(file, new_file)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        if os.path.exists(folder):
+            for file in os.listdir(folder):
+                if file.startswith(f"{idx:04d}_") and (file.endswith('.part') or file.endswith('.ytdl')):
+                    try:
+                        os.remove(os.path.join(folder, file))
+                    except OSError:
+                        pass
+        raise e
 
 async def process_playlist(url, max_concurrent=8):
     extract_opts = {
         'extract_flat': 'in_playlist',
+        'nocachefile': True,
+        'js_runtimes': {'node': {}},
         'quiet': True,
         'ignoreerrors': True,
         'retries': float('inf'),            
@@ -68,7 +62,8 @@ async def process_playlist(url, max_concurrent=8):
 
     raw_title = info.get('title', 'Unknown_Playlist')
     playlist_name = re.sub(r'[\\/*?:"<>|]', "", raw_title).strip()
-    os.makedirs(f'downloads/yt/{playlist_name}', exist_ok=True)
+    folder = f'downloads/yt/{playlist_name}'
+    os.makedirs(folder, exist_ok=True)
     
     raw_entries = info.get('entries', [])
     entries = [entry for entry in raw_entries if entry is not None]
@@ -84,3 +79,50 @@ async def process_playlist(url, max_concurrent=8):
     ]
     
     await asyncio.gather(*tasks, return_exceptions=True)
+    
+    total_tracks = len(entries)
+    downloaded_count = 0
+    missing_items = []
+    
+    if os.path.exists(folder):
+        available_files = os.listdir(folder)
+    else:
+        available_files = []
+        
+    for i, entry in enumerate(entries):
+        idx = i + 1
+        url = entry.get('url', '')
+        if not url:
+            continue
+            
+        found = False
+        prefix = f"{idx:04d}_"
+        for file in available_files:
+            if file.startswith(prefix) and not file.endswith('.part') and not file.endswith('.ytdl'):
+                found = True
+                break
+                
+        if found:
+            downloaded_count += 1
+        else:
+            missing_items.append((idx, url))
+            
+    skipped_count = len(missing_items)
+    completion_percentage = (downloaded_count / total_tracks * 100) if total_tracks > 0 else 0.0
+    
+    print(f"Completion: {completion_percentage:.2f}% ({downloaded_count}/{total_tracks} files downloaded)")
+    print(f"Files skipped/missed: {skipped_count}")
+    
+    if missing_items:
+        base_dir = os.path.dirname(os.path.dirname(__file__)) if '__file__' in locals() else os.getcwd()
+        cache_dir = os.path.join(base_dir, 'src', 'cache') if os.path.exists(os.path.join(base_dir, 'src')) else os.path.join(base_dir, 'cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        info_file_path = os.path.join(cache_dir, f"{playlist_name}.info")
+        current_date = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+        
+        with open(info_file_path, 'w', encoding='utf-8') as f:
+            f.write(f"{current_date}\n")
+            f.write(f"[{playlist_name}]\n")
+            for idx, item_url in missing_items:
+                f.write(f"{idx:04d} \"{item_url}\"\n")

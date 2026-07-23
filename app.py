@@ -4,16 +4,18 @@ import importlib
 import asyncio
 import yt_dlp
 
-browser_name = input('Enter Your Browser name: ').lower() # e.g.: brave, firefox, chrome, etc...
-if not browser_name: browser_name = 'chrome'
+platforms_config = {'yt': 'YouTube'}
+
+print("[SETUP]")
+browser_name = input('Enter your browser name (DEFAULT: FireFox): ').strip().lower()
+if not browser_name: 
+    browser_name = 'firefox'
 
 def ensure_cached_cookies():
     cache_dir = os.path.join('src', 'cache')
     os.makedirs(cache_dir, exist_ok=True)
     cookie_file = os.path.join(cache_dir, 'cookies.txt')
-    
     if not os.path.exists(cookie_file):
-        print("Caching browser cookies...")
         try:
             opts = {
                 'cookiesfrombrowser': (browser_name,),
@@ -24,17 +26,14 @@ def ensure_cached_cookies():
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-        except Exception as e:
-            print(e)
+        except Exception:
+            pass
 
 def get_capabilities():
     caps = {}
-    all_modes = set()
     src_dir = 'src'
-    
     if not os.path.exists(src_dir):
-        return caps, []
-        
+        return caps
     files = [f for f in os.listdir(src_dir) if f.endswith('.py') and f != '__init__.py']
     for file in files:
         base = file[:-3]
@@ -42,115 +41,97 @@ def get_capabilities():
         if len(parts) >= 2:
             platform = parts[0]
             mode = parts[1]
-            all_modes.add(mode)
-            
             if platform not in caps:
                 caps[platform] = []
             if mode not in caps[platform]:
                 caps[platform].append(mode)
-                
-    return caps, sorted(list(all_modes))
+    if os.path.exists(os.path.join(src_dir, 'rebuild.py')):
+        if 'yt' not in caps:
+            caps['yt'] = []
+        caps['yt'].append('rebuild')
+    return caps
 
-def prompt_selection(prompt_text, available_items, all_items, descriptions=None):
-    if descriptions is None:
-        descriptions = {}
-        
-    print(prompt_text)
+def select_item(header, available, fallback_mapping):
+    print(f"\n{header}")
     options = []
-    display_idx = 1
-    
-    for item in all_items:
-        if item in available_items:
-            desc = f" - {descriptions.get(item, '')}" if item in descriptions else ""
-            print(f"{display_idx}. {item}{desc}")
-            options.append({'item': item, 'available': True, 'idx': str(display_idx)})
-            display_idx += 1
-        else:
-            options.append({'item': item, 'available': False, 'idx': '-'})
-            
+    for idx, item in enumerate(available, 1):
+        display_name = fallback_mapping.get(item.lower(), item.upper())
+        print(f"{idx}. {display_name}")
+        options.append((str(idx), item))
     while True:
         choice = input("Select an option: ").strip()
-        for opt in options:
-            if opt['available'] and (choice == opt['item'] or choice == opt['idx']):
-                return opt['item']
-            elif not opt['available'] and (choice == opt['item']):
-                print("That option is currently unavailable.")
-                break
-        else:
-            print("Invalid selection. Try again.")
+        for idx_str, item in options:
+            if choice == idx_str or choice.lower() == item.lower() or choice.lower() == fallback_mapping.get(item.lower(), item.upper()).lower():
+                return item
+        print("Invalid selection. Try again.")
 
 def main():
     ensure_cached_cookies()
-    caps, all_modes = get_capabilities()
+    caps = get_capabilities()
     if not caps:
-        print("No scripts found. Please check if '{platform}_*.py' scripts are inside the 'src' directory.")
-        print("Redownload if they're not there!")
         sys.exit(1)
         
-    platforms = sorted(list(caps.keys()))
-    print("\n--- Platform Selection ---")
-    selected_platform = prompt_selection("Available platforms:", platforms, platforms)
-    
+    selected_platform = select_item("[PLATFORM]", list(caps.keys()), platforms_config)
     available_modes = caps[selected_platform]
     
-    display_modes = []
-    if 'playlist' in available_modes or 'edit' in available_modes:
-        display_modes.append('playlist')
+    top_modes = []
+    if 'playlist' in available_modes or 'append' in available_modes or 'rebuild' in available_modes:
+        top_modes.append('playlist')
     if 'single' in available_modes:
-        display_modes.append('single')
+        top_modes.append('single')
         
-    all_possible_top_modes = []
-    if 'playlist' in all_modes or 'edit' in all_modes:
-        all_possible_top_modes.append('playlist')
-    if 'single' in all_modes:
-        all_possible_top_modes.append('single')
-        
-    print("\n--- Mode Selection ---")
-    selected_top_mode = prompt_selection("Available modes:", display_modes, all_possible_top_modes)
+    selected_top_mode = select_item("[MODE]", top_modes, {})
     
     selected_sub_mode = None
     if selected_top_mode == 'playlist':
         sub_options = []
         if 'playlist' in available_modes:
-            sub_options.append('create playlist')
-        if 'edit' in available_modes:
-            sub_options.append('append playlist')
-            
-        all_possible_subs = ['create playlist', 'append playlist']
-        
-        print("\n--- Playlist Options ---")
-        selected_sub_mode = prompt_selection("Select playlist action:", sub_options, all_possible_subs)
-    
-    url = input(f"\nEnter URL: ").strip()
-    if not url:
-        print("URL cannot be empty.")
-        sys.exit(1)
-        
-    if selected_top_mode == 'single':
-        module_name = f"src.{selected_platform}_single"
-        func_name = "process_single"
+            sub_options.append('create')
+        if 'append' in available_modes:
+            sub_options.append('append')
+        if 'rebuild' in available_modes:
+            sub_options.append('rebuild')
+        selected_sub_mode = select_item("[PLAYLIST]", sub_options, {})
+
+    if selected_top_mode == 'playlist' and selected_sub_mode == 'rebuild':
+        module_name = "src.rebuild"
+        func_name = "main"
+        url = None
     else:
-        if selected_sub_mode == 'create playlist':
+        url = input("\nEnter URL: ").strip()
+        if not url:
+            sys.exit(1)
+        if selected_top_mode == 'single':
+            module_name = f"src.{selected_platform}_single"
+            func_name = "process_single"
+        elif selected_sub_mode == 'create':
             module_name = f"src.{selected_platform}_playlist"
             func_name = "process_playlist"
-        elif selected_sub_mode == 'append playlist':
-            module_name = f"src.{selected_platform}_edit"
+        elif selected_sub_mode == 'append':
+            module_name = f"src.{selected_platform}_append"
             func_name = "process_append"
             
     try:
         mod = importlib.import_module(module_name)
         if hasattr(mod, func_name):
             func = getattr(mod, func_name)
-            asyncio.run(func(url))
-            print("\nDownload operation completed.")
+            if asyncio.iscoroutinefunction(func):
+                if url is not None:
+                    asyncio.run(func(url))
+                else:
+                    asyncio.run(func())
+            else:
+                if url is not None:
+                    func(url)
+                else:
+                    func()
         else:
-            print(f"Critical Error: Function '{func_name}' not found in {module_name}.")
-    except Exception as e:
-        print(f"An execution error occurred: {e}")
+            pass
+    except Exception:
+        pass
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user.")
         sys.exit(0)

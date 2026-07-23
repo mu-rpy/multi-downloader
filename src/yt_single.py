@@ -8,21 +8,14 @@ COOKIE_PATH = os.path.join('src', 'cache', 'cookies.txt')
 def download_single(url):
     folder = 'downloads/yt/singles'
     opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'nocachefile': True,
+        'js_runtimes': {'node': {}},
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'aac',
-            },
-            {
-                'key': 'FFmpegMetadata',
-                'add_metadata': True,
             }
-        ],
-        'parse_metadata': [
-            '%(title)s:%(meta_artist)s - %(meta_title)s',
-            '%(uploader)s:%(meta_artist)s',
-            '%(title)s:%(meta_title)s',
         ],
         'outtmpl': f'{folder}/%(title)s.%(ext)s',
         'restrictfilenames': False,
